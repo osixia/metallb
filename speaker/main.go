@@ -18,6 +18,7 @@ import (
 	"crypto/sha256"
 	"flag"
 	"fmt"
+	"k8s.io/apimachinery/pkg/labels"
 	golog "log"
 	"net"
 	"os"
@@ -216,6 +217,7 @@ type controller struct {
 	protocols map[config.Proto]Protocol
 	announced map[string]config.Proto // service name -> protocol advertising it
 	svcIP     map[string]net.IP       // service name -> assigned IP
+	nodeLabels labels.Set
 }
 
 type controllerConfig struct {
@@ -299,6 +301,16 @@ func (c *controller) SetBalancer(l gokitlog.Logger, name string, svc *v1.Service
 	if pool == nil {
 		l.Log("bug", "true", "msg", "internal error: allocated IP has no matching address pool")
 		return c.deleteBalancer(l, name, "internalError")
+	}
+	validForNode := false
+	for _,ns := range pool.NodeSelectors {
+		if ns.Matches(c.nodeLabels) {
+			validForNode = true
+		}
+	}
+	if !validForNode {
+		l.Log("op", "setBalancer", "error", "assigned IP not allowed in this node by config")
+		return c.deleteBalancer(l, name, "ipNotAllowed")
 	}
 
 	if proto, ok := c.announced[name]; ok && proto != pool.Protocol {
@@ -411,6 +423,12 @@ func (c *controller) SetConfig(l gokitlog.Logger, cfg *config.Config) k8s.SyncSt
 }
 
 func (c *controller) SetNode(l gokitlog.Logger, node *v1.Node) k8s.SyncState {
+	nodeLabels := node.Labels
+	if nodeLabels == nil {
+		nodeLabels = map[string]string{}
+	}
+	ns := labels.Set(nodeLabels)
+	c.nodeLabels = ns
 	for proto, handler := range c.protocols {
 		if err := handler.SetNode(l, node); err != nil {
 			l.Log("op", "setNode", "error", err, "protocol", proto, "msg", "failed to propagate node info to protocol handler")
