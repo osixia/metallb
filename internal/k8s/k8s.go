@@ -5,14 +5,16 @@ import (
 	"fmt"
 	"io/ioutil"
 	"net/http"
+	"strconv"
 
 	"go.universe.tf/metallb/internal/config"
 
 	"github.com/go-kit/kit/log"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
-	"k8s.io/api/core/v1"
+	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/fields"
+	types "k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/scheme"
 	v1core "k8s.io/client-go/kubernetes/typed/core/v1"
@@ -425,4 +427,18 @@ func (c *Client) sync(key interface{}) SyncState {
 	default:
 		panic(fmt.Errorf("unknown key type for %#v (%T)", key, key))
 	}
+}
+
+// SetIPLabel set label ip on node
+func (c *Client) SetIPLabel(node, ip string, onNode bool) error {
+
+	key := "metallb.cloud.osixia.net/" + ip
+
+	patch := `{"metadata":{"labels":{"` + key + `":"` + strconv.FormatBool(onNode) + `"}}}`
+
+	if _, err := c.client.CoreV1().Nodes().Patch(node, types.StrategicMergePatchType, []byte(patch)); err != nil {
+		return fmt.Errorf("Failed to set node %s label %s=%t: %s", node, key, onNode, err.Error())
+	}
+
+	return nil
 }

@@ -17,6 +17,7 @@ package main
 import (
 	"bytes"
 	"crypto/sha256"
+	"fmt"
 	"net"
 	"sort"
 
@@ -24,7 +25,8 @@ import (
 	"github.com/hashicorp/memberlist"
 	"go.universe.tf/metallb/internal/config"
 	"go.universe.tf/metallb/internal/layer2"
-	"k8s.io/api/core/v1"
+	v1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/labels"
 )
 
 type layer2Controller struct {
@@ -76,6 +78,9 @@ func usableNodes(eps *v1.Endpoints, mList *memberlist.Memberlist) []string {
 }
 
 func (c *layer2Controller) ShouldAnnounce(l log.Logger, name string, svc *v1.Service, eps *v1.Endpoints) string {
+
+	l.Log("op", "ShouldAnnounce", "caca", name, "svc", fmt.Sprintf("svc: %v+", svc), "eps", fmt.Sprintf("eps :%v+", eps), "mList", c.mList)
+
 	nodes := usableNodes(eps, c.mList)
 	// Sort the slice by the hash of node + service name. This
 	// produces an ordering of ready nodes that is unique to this
@@ -96,9 +101,8 @@ func (c *layer2Controller) ShouldAnnounce(l log.Logger, name string, svc *v1.Ser
 	return "notOwner"
 }
 
-func (c *layer2Controller) SetBalancer(l log.Logger, name string, lbIP net.IP, pool *config.Pool) error {
-	c.announcer.SetBalancer(name, lbIP)
-	return nil
+func (c *layer2Controller) SetBalancer(l log.Logger, name string, lbIP net.IP, pool *config.Pool, nodeLabels labels.Set) error {
+	return c.announcer.SetBalancer(name, lbIP, pool, nodeLabels)
 }
 
 func (c *layer2Controller) DeleteBalancer(l log.Logger, name, reason string) error {

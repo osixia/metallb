@@ -1,6 +1,7 @@
 package layer2
 
 import (
+	"fmt"
 	"io/ioutil"
 	"net"
 	"os"
@@ -9,6 +10,10 @@ import (
 	"time"
 
 	"github.com/go-kit/kit/log"
+
+	"go.universe.tf/metallb/internal/config"
+	"go.universe.tf/metallb/internal/layer2/provider"
+	"k8s.io/apimachinery/pkg/labels"
 )
 
 // Announce is used to "announce" new IPs mapped to the node's MAC address.
@@ -131,6 +136,24 @@ func (a *Announce) updateInterfaces() {
 	return
 }
 
+func (a *Announce) notifyProvider(ip net.IP, providerConfig *config.Provider, nodeLabels labels.Set) error {
+
+	destinationLabelKey := fmt.Sprintf("%s.provider.metallb.cloud.osixia.net/destination", providerConfig.Name)
+
+	if !nodeLabels.Has(destinationLabelKey) {
+		return fmt.Errorf("Node required label %s not found", destinationLabelKey)
+	}
+
+	destination := nodeLabels.Get(destinationLabelKey)
+
+	client, err := provider.GetClient(a.logger, providerConfig.Name, providerConfig.Auth)
+	if err != nil {
+		return err
+	}
+
+	return client.SetIP(ip, destination)
+}
+
 func (a *Announce) spam(name string) {
 	// TODO: should abort if we lose control of the IP mid-spam.
 	start := time.Now()
@@ -180,14 +203,21 @@ func (a *Announce) shouldAnnounce(ip net.IP) dropReason {
 }
 
 // SetBalancer adds ip to the set of announced addresses.
-func (a *Announce) SetBalancer(name string, ip net.IP) {
+func (a *Announce) SetBalancer(name string, ip net.IP, pool *config.Pool, nodeLabels labels.Set) error {
 	a.Lock()
 	defer a.Unlock()
+
+	if pool != nil && pool.Provider != nil {
+		if err := a.notifyProvider(ip, pool.Provider, nodeLabels); err != nil {
+			a.logger.Log("op", "notifyProvider", "error", err)
+			return err
+		}
+	}
 
 	// Kubernetes may inform us that we should advertise this address multiple
 	// times, so just no-op any subsequent requests.
 	if _, ok := a.ips[name]; ok {
-		return
+		return nil
 	}
 	a.ips[name] = ip
 
@@ -195,7 +225,7 @@ func (a *Announce) SetBalancer(name string, ip net.IP) {
 	if a.ipRefcnt[ip.String()] > 1 {
 		// Multiple services are using this IP, so there's nothing
 		// else to do right now.
-		return
+		return nil
 	}
 
 	for _, client := range a.ndps {
@@ -206,6 +236,7 @@ func (a *Announce) SetBalancer(name string, ip net.IP) {
 
 	go a.spam(name)
 
+	return nil
 }
 
 // DeleteBalancer deletes an address from the set of addresses we should announce.

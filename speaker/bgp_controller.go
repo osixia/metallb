@@ -25,7 +25,7 @@ import (
 
 	"go.universe.tf/metallb/internal/bgp"
 	"go.universe.tf/metallb/internal/config"
-	"k8s.io/api/core/v1"
+	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/labels"
 
 	"github.com/go-kit/kit/log"
@@ -207,7 +207,7 @@ func (c *bgpController) syncPeers(l log.Logger) error {
 	return nil
 }
 
-func (c *bgpController) SetBalancer(l log.Logger, name string, lbIP net.IP, pool *config.Pool) error {
+func (c *bgpController) SetBalancer(l log.Logger, name string, lbIP net.IP, pool *config.Pool, nodeLabels labels.Set) error {
 	c.svcAds[name] = nil
 	for _, adCfg := range pool.BGPAdvertisements {
 		m := net.CIDRMask(adCfg.AggregationLength, 32)

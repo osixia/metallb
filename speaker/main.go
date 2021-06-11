@@ -18,7 +18,6 @@ import (
 	"crypto/sha256"
 	"flag"
 	"fmt"
-	"k8s.io/apimachinery/pkg/labels"
 	golog "log"
 	"net"
 	"os"
@@ -33,6 +32,7 @@ import (
 	"go.universe.tf/metallb/internal/logging"
 	"go.universe.tf/metallb/internal/version"
 	v1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/labels"
 
 	gokitlog "github.com/go-kit/kit/log"
 	"github.com/hashicorp/memberlist"
@@ -57,6 +57,7 @@ type service interface {
 	UpdateStatus(svc *v1.Service) error
 	Infof(svc *v1.Service, desc, msg string, args ...interface{})
 	Errorf(svc *v1.Service, desc, msg string, args ...interface{})
+	SetIPLabel(string, string, bool) error
 }
 
 func main() {
@@ -214,9 +215,9 @@ type controller struct {
 	config *config.Config
 	client service
 
-	protocols map[config.Proto]Protocol
-	announced map[string]config.Proto // service name -> protocol advertising it
-	svcIP     map[string]net.IP       // service name -> assigned IP
+	protocols  map[config.Proto]Protocol
+	announced  map[string]config.Proto // service name -> protocol advertising it
+	svcIP      map[string]net.IP       // service name -> assigned IP
 	nodeLabels labels.Set
 }
 
@@ -303,7 +304,7 @@ func (c *controller) SetBalancer(l gokitlog.Logger, name string, svc *v1.Service
 		return c.deleteBalancer(l, name, "internalError")
 	}
 	validForNode := false
-	for _,ns := range pool.NodeSelectors {
+	for _, ns := range pool.NodeSelectors {
 		if ns.Matches(c.nodeLabels) {
 			validForNode = true
 		}
@@ -333,11 +334,17 @@ func (c *controller) SetBalancer(l gokitlog.Logger, name string, svc *v1.Service
 	}
 
 	if deleteReason := handler.ShouldAnnounce(l, name, svc, eps); deleteReason != "" {
+		l.Log("op", "ShouldAnnounce", "error", deleteReason, "msg", "Sould not announce service")
 		return c.deleteBalancer(l, name, deleteReason)
 	}
 
-	if err := handler.SetBalancer(l, name, lbIP, pool); err != nil {
+	if err := handler.SetBalancer(l, name, lbIP, pool, c.nodeLabels); err != nil {
 		l.Log("op", "setBalancer", "error", err, "msg", "failed to announce service")
+		return k8s.SyncStateError
+	}
+
+	if err := c.client.SetIPLabel(c.myNode, lbIP.String(), true); err != nil {
+		l.Log("op", "SetIPLabel", "error", err, "msg", "failed to set node label")
 		return k8s.SyncStateError
 	}
 
@@ -367,6 +374,13 @@ func (c *controller) deleteBalancer(l gokitlog.Logger, name, reason string) k8s.
 	if err := c.protocols[proto].DeleteBalancer(l, name, reason); err != nil {
 		l.Log("op", "deleteBalancer", "error", err, "msg", "failed to clear balancer state")
 		return k8s.SyncStateError
+	}
+
+	if lbIP, ok := c.svcIP[name]; ok {
+		if err := c.client.SetIPLabel(c.myNode, lbIP.String(), false); err != nil {
+			l.Log("op", "SetIPLabel", "error", err, "msg", "failed to set node label")
+			return k8s.SyncStateError
+		}
 	}
 
 	announcing.Delete(prometheus.Labels{
@@ -442,7 +456,7 @@ func (c *controller) SetNode(l gokitlog.Logger, node *v1.Node) k8s.SyncState {
 type Protocol interface {
 	SetConfig(gokitlog.Logger, *config.Config) error
 	ShouldAnnounce(gokitlog.Logger, string, *v1.Service, *v1.Endpoints) string
-	SetBalancer(gokitlog.Logger, string, net.IP, *config.Pool) error
+	SetBalancer(gokitlog.Logger, string, net.IP, *config.Pool, labels.Set) error
 	DeleteBalancer(gokitlog.Logger, string, string) error
 	SetNode(gokitlog.Logger, *v1.Node) error
 }

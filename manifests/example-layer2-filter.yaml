@@ -6,17 +6,27 @@ metadata:
 data:
   config: |
     address-pools:
-    - name: my-ip-space
+    - name: soyoustart-pool
       protocol: layer2
       addresses:
-      - 192.168.5.240/28
+      - 92.222.234.88/32
+      provider:
+        name: soyoustart
+        auth:
+          application-key: vG6nDpuO91RHm1qH
+          application-secret: eCd9fjhUmjmDSrdMzbTlPOu3HNaA2t7z
+          consumer-key: b9quqHvreizXHm3Iv35CFoebtFQBruIz
       node-selectors:
       - match-labels:
-          metallb.universe.tf/rack: test1
-    - name: my-ip-space2
+          cloud.osixia.net/provider: soyoustart
+    - name: scaleway-dedibox-pool
       protocol: layer2
       addresses:
-      - 192.168.5.224/28
+      - 51.158.26.205/32
+      provider:
+        name: scaleway-dedibox
+        auth:
+          token: 4f6dafa0f968c562a64db8c2cd5d285d6917425e
       node-selectors:
       - match-labels:
-          metallb.universe.tf/rack: test2
+          cloud.osixia.net/provider: scaleway-dedibox

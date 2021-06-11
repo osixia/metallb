@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/mikioh/ipaddr"
+	"go.universe.tf/metallb/internal/layer2/provider"
 	yaml "gopkg.in/yaml.v2"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
@@ -66,6 +67,7 @@ type addressPool struct {
 	AutoAssign        *bool              `yaml:"auto-assign"`
 	BGPAdvertisements []bgpAdvertisement `yaml:"bgp-advertisements"`
 	NodeSelectors     []nodeSelector     `yaml:"node-selectors"`
+	Provider          *Provider          `yaml:"provider"`
 }
 
 type bgpAdvertisement struct {
@@ -90,6 +92,12 @@ const (
 	BGP    Proto = "bgp"
 	Layer2       = "layer2"
 )
+
+// Provider holds the ip providers configuration.
+type Provider struct {
+	Name provider.Provider `yaml:"name"`
+	Auth *provider.Auth    `yaml:"auth"`
+}
 
 // Peer is the configuration of a BGP peering session.
 type Peer struct {
@@ -136,6 +144,8 @@ type Pool struct {
 	// Only assign this pool for nodes that match one of these
 	// selectors.
 	NodeSelectors []labels.Selector
+	// Address is asing by an ip provider
+	Provider *Provider
 }
 
 // BGPAdvertisement describes one translation from an IP address to a BGP advertisement.
@@ -364,6 +374,14 @@ func parseAddressPool(p addressPool, bgpCommunities map[string]uint32) (*Pool, e
 		return nil, fmt.Errorf("unknown protocol %q", ret.Protocol)
 	}
 
+	if p.Provider != nil {
+		if err := p.Provider.isValid(); err != nil {
+			return nil, err
+		}
+
+		ret.Provider = p.Provider
+	}
+
 	return ret, nil
 }
 
@@ -493,4 +511,33 @@ func isIPv4(ip net.IP) bool {
 
 func isIPv6(ip net.IP) bool {
 	return ip.To16() != nil && ip.To4() == nil
+}
+
+func (p Provider) isValid() error {
+
+	if p.Auth == nil {
+		return fmt.Errorf("Auth configuration must be set for provider %s", p.Name)
+	}
+
+	// validate provider configuration
+	switch p.Name {
+	case provider.SclalewayDedibox:
+		if len(p.Auth.Token) == 0 {
+			return fmt.Errorf("Auth token must be set for provider %s", p.Name)
+		}
+		return nil
+	case provider.Ovh, provider.Soyoustart, provider.Kimsufi:
+		if len(p.Auth.ApplicationKey) == 0 {
+			return fmt.Errorf("Auth application key must be set for provider %s", p.Name)
+		}
+		if len(p.Auth.ApplicationSecret) == 0 {
+			return fmt.Errorf("Auth application secret must be set for provider %s", p.Name)
+		}
+		if len(p.Auth.ConsumerKey) == 0 {
+			return fmt.Errorf("Auth consumer key must be set for provider %s", p.Name)
+		}
+		return nil
+	}
+	return fmt.Errorf("Invalid provider name: %s", p)
+
 }

@@ -172,7 +172,7 @@ def dev_env(ctx, architecture="amd64", name="kind", cni=None):
         config = {
             "apiVersion": "kind.sigs.k8s.io/v1alpha3",
             "kind": "Cluster",
-            "nodes": [{"role": "control-plane"},
+            "nodes": [{"role": "control-plane", "extraPortMappings": [    {      "containerPort": 30080,       "hostPort": 7070    }  ]},
                       {"role": "worker"},
                       {"role": "worker"},
             ],
@@ -187,8 +187,10 @@ def dev_env(ctx, architecture="amd64", name="kind", cni=None):
             tmp.flush()
             run("kind create cluster --name={} --config={}".format(name, tmp.name), pty=True, echo=True)
 
-    config = run("kind get kubeconfig-path --name={}".format(name), hide=True).stdout.strip()
-    env = {"KUBECONFIG": config}
+    config = run("kind get kubeconfig --name={}".format(name), hide=True).stdout.strip()
+    tmpconfig = tempfile.NamedTemporaryFile()
+    tmpconfig.write(str.encode(config))
+    env = {"KUBECONFIG": tmpconfig.name}
     if mk_cluster and cni:
         run("kubectl apply -f e2etest/manifests/{}.yaml".format(cni), echo=True, env=env)
 
@@ -197,6 +199,7 @@ def dev_env(ctx, architecture="amd64", name="kind", cni=None):
     run("kind load docker-image --name={} metallb/speaker:dev-{}".format(name, architecture), echo=True)
     run("kind load docker-image --name={} metallb/mirror-server:dev-{}".format(name, architecture), echo=True)
 
+    run("kubectl apply -f manifests/namespace.yaml", echo=True)
     run("kubectl delete po -nmetallb-system --all", echo=True)
     with open("manifests/metallb.yaml") as f:
         manifest = f.read()
